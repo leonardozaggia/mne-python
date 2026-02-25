@@ -139,6 +139,7 @@ Projections:
    temporal_derivative_distribution_repair
    motion_correct_pca
    motion_correct_spline
+   motion_correct_wavelet
 
 :py:mod:`mne.preprocessing.ieeg`:
 

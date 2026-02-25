@@ -22,3 +22,4 @@ from ._scalp_coupling_index import scalp_coupling_index
 from ._tddr import temporal_derivative_distribution_repair, tddr
 from ._pca import motion_correct_pca, pca
 from ._spline import motion_correct_spline, spline
+from ._wavelet import motion_correct_wavelet, wavelet
