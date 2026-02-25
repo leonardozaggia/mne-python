@@ -138,7 +138,7 @@ Projections:
    scalp_coupling_index
    temporal_derivative_distribution_repair
    motion_correct_pca
-   pca
+   motion_correct_spline
 
 :py:mod:`mne.preprocessing.ieeg`:
 
