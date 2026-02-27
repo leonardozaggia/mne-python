@@ -10,12 +10,16 @@ import numpy as np
 from scipy.linalg import svd
 
 from ...io import BaseRaw
-from ...utils import _validate_type, verbose
+from ...utils import _validate_type, logger, verbose, warn
 from ..nirs import _validate_nirs_info
+from ._motion_artifact import (
+    _tinc_from_annotations,
+    detect_motion_artifacts,
+)
 
 
 @verbose
-def motion_correct_pca(raw, tInc, nSV=0.97, *, verbose=None):
+def motion_correct_pca(raw, tInc=None, nSV=0.97, *, verbose=None):
     """Apply PCA-based motion correction to fNIRS data.
 
     Extracts the motion-artifact portions of the signal, performs a singular
@@ -25,13 +29,40 @@ def motion_correct_pca(raw, tInc, nSV=0.97, *, verbose=None):
     Based on Homer3 v1.80.2 ``hmrR_MotionCorrectPCA.m``
     :footcite:`HuppertEtAl2009`.
 
+    How it works:
+
+    * **Artifact mask** – ``tInc`` is a boolean array (``True`` = clean).
+      When not supplied, bad segments are taken from ``raw.annotations``
+      (any annotation whose description starts with ``'bad'``, case-
+      insensitive); if no BAD annotations are present the signal-based
+      detector :func:`detect_motion_artifacts` is called automatically.
+    * **Extraction** – only the flagged (``False``) samples are collected
+      across *all* fNIRS channels into a matrix of shape
+      ``(n_artifact_samples, n_channels)``.
+    * **Normalisation** – the matrix is z-scored per channel so that no
+      single channel dominates the decomposition.
+    * **SVD / PCA** – the covariance of the z-scored matrix is
+      decomposed.  The resulting principal components represent the
+      dominant shared signal patterns across channels during motion
+      periods.
+    * **Component removal** – the top ``nSV`` components are projected out
+      of the z-scored artifact segments.
+    * **Reinsertion** – the cleaned segments are un-normalised and stitched
+      back into the recording at the correct time positions, with boundary
+      corrections to avoid discontinuities at segment edges.
+
     Parameters
     ----------
     raw : instance of Raw
         The raw fNIRS data (optical density or hemoglobin).
-    tInc : array-like of bool, shape (n_times,)
+    tInc : array-like of bool, shape (n_times,) | None
         Global motion-artifact mask.  ``True`` = clean sample,
-        ``False`` = motion artifact.
+        ``False`` = motion artifact.  When ``None`` (default) the mask is
+        derived automatically: existing ``BAD`` annotations on *raw* are
+        used first; if none are present
+        :func:`detect_motion_artifacts` is called with default parameters.
+        To use custom detection parameters, call
+        :func:`detect_motion_artifacts` first and pass the result here.
     nSV : float | int
         Number of principal components to remove.
 
@@ -52,6 +83,10 @@ def motion_correct_pca(raw, tInc, nSV=0.97, *, verbose=None):
     nSV : int
         Actual number of principal components removed.
 
+    See Also
+    --------
+    detect_motion_artifacts : Build the ``tInc`` mask with custom parameters.
+
     Notes
     -----
     There is a shorter alias ``mne.preprocessing.nirs.pca`` that
@@ -70,8 +105,24 @@ def motion_correct_pca(raw, tInc, nSV=0.97, *, verbose=None):
             "PCA motion correction should be run on optical density or hemoglobin data."
         )
 
-    tInc = np.asarray(tInc, dtype=bool)
     n_times = raw._data.shape[1]
+
+    # Resolve tInc: explicit mask → BAD annotations → auto-detection
+    if tInc is None:
+        has_bad = any(
+            a["description"].upper().startswith("BAD") for a in raw.annotations
+        )
+        if has_bad:
+            logger.info("motion_correct_pca: building tInc from BAD annotations.")
+            tInc = _tinc_from_annotations(raw, n_times)
+        else:
+            logger.info(
+                "motion_correct_pca: no BAD annotations found, running "
+                "detect_motion_artifacts with default parameters."
+            )
+            tInc = detect_motion_artifacts(raw, verbose=verbose)
+
+    tInc = np.asarray(tInc, dtype=bool)
 
     # (n_picks, n_times)
     y = raw._data[picks, :]
@@ -80,10 +131,11 @@ def motion_correct_pca(raw, tInc, nSV=0.97, *, verbose=None):
     y_motion = y[:, ~tInc].T
 
     if y_motion.shape[0] == 0:
-        raise ValueError(
-            "No motion-artifact samples found (tInc is all True). "
-            "Mark artifact regions with False before calling this function."
+        warn(
+            "No motion-artifact samples found in tInc (all True). "
+            "Returning data unchanged."
         )
+        return raw, np.array([]), 0
 
     # Z-score across time within the motion segments
     y_mean = y_motion.mean(axis=0)

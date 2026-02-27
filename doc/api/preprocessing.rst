@@ -137,6 +137,8 @@ Projections:
    short_channels
    scalp_coupling_index
    temporal_derivative_distribution_repair
+   detect_motion_artifacts
+   detect_motion_artifacts_by_channel
    motion_correct_pca
    motion_correct_spline
    motion_correct_wavelet

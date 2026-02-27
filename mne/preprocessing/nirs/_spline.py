@@ -10,8 +10,12 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 from ...io import BaseRaw
-from ...utils import _validate_type, verbose
+from ...utils import _validate_type, logger, verbose
 from ..nirs import _validate_nirs_info
+from ._motion_artifact import (
+    _tinc_ch_from_annotations,
+    detect_motion_artifacts_by_channel,
+)
 
 
 def _compute_window(seg_length, dt_short, dt_long, fs):
@@ -61,15 +65,24 @@ def motion_correct_spline(raw, p=0.01, tIncCh=None, *, verbose=None):
         that follows the data more closely.  Default is ``0.01``.
     tIncCh : array-like of bool, shape (n_picks, n_times) | None
         Per-channel motion-artifact mask.  ``True`` = clean sample,
-        ``False`` = motion artifact.  When ``None`` the entire recording is
-        treated as a single motion-artifact segment and only spline detrending
-        is applied (no baseline shifting).
+        ``False`` = motion artifact.  When ``None`` (default) the mask is
+        derived automatically: existing ``BAD`` annotations on *raw* are
+        used first (applied to all channels); if none are present
+        :func:`detect_motion_artifacts_by_channel` is called with default
+        parameters.  To use custom detection parameters, call
+        :func:`detect_motion_artifacts_by_channel` first and pass the
+        result here.
     %(verbose)s
 
     Returns
     -------
     raw : instance of Raw
         Data with spline motion correction applied (copy).
+
+    See Also
+    --------
+    detect_motion_artifacts_by_channel : Build the ``tIncCh`` mask with
+        custom parameters.
 
     Notes
     -----
@@ -100,8 +113,21 @@ def motion_correct_spline(raw, p=0.01, tIncCh=None, *, verbose=None):
     dt_short = 0.3  # seconds
     dt_long = 3.0  # seconds
 
+    # Resolve tIncCh: explicit mask → BAD annotations → auto-detection
     if tIncCh is None:
-        tIncCh = np.ones((len(picks), n_times), dtype=bool)
+        has_bad = any(
+            a["description"].upper().startswith("BAD") for a in raw.annotations
+        )
+        if has_bad:
+            logger.info("motion_correct_spline: building tIncCh from BAD annotations.")
+            tIncCh = _tinc_ch_from_annotations(raw, len(picks), n_times)
+        else:
+            logger.info(
+                "motion_correct_spline: no BAD annotations found, running "
+                "detect_motion_artifacts_by_channel with default parameters."
+            )
+            tIncCh = detect_motion_artifacts_by_channel(raw, verbose=verbose)
+
     tIncCh = np.asarray(tIncCh, dtype=bool)
 
     for ch_idx, pick in enumerate(picks):

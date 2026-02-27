@@ -103,15 +103,18 @@ def test_motion_correct_pca_returns_copy(fname):
 
 @testing.requires_testing_data
 @pytest.mark.parametrize("fname", ([fname_nirx_15_2]))
-def test_motion_correct_pca_all_good_raises(fname):
-    """Test PCA correction raises when tInc has no artefact samples."""
+def test_motion_correct_pca_all_good_warns(fname):
+    """Test PCA correction warns and returns data unchanged when no artefact samples."""
     raw = read_raw_nirx(fname)
     raw_od = optical_density(raw)
     n_times = raw_od._data.shape[1]
 
     tInc = np.ones(n_times, dtype=bool)  # all clean – no motion to correct
-    with pytest.raises(ValueError, match="No motion-artifact samples"):
-        motion_correct_pca(raw_od, tInc=tInc)
+    with pytest.warns(RuntimeWarning, match="No motion-artifact samples"):
+        raw_corr, svs, nSV_out = motion_correct_pca(raw_od, tInc=tInc)
+    assert svs.shape == (0,)
+    assert nSV_out == 0
+    np.testing.assert_array_equal(raw_corr._data, raw_od._data)
 
 
 def test_pca_alias():
